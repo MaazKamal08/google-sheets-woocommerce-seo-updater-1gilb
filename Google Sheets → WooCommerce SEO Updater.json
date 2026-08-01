@@ -1,0 +1,329 @@
+{
+  "name": "Google Sheets → WooCommerce SEO Updater",
+  "nodes": [
+    {
+      "parameters": {
+        "jsCode": "// Get all input items\nconst items = $input.all();\n\n// Process each item and return transformed data\nreturn items.map(item => {\n  const row = item.json;\n  \n  // Validate URL exists\n  if (!row.Urls) {\n    throw new Error('No URL found in row');\n  }\n  \n  const url = row.Urls.trim();\n  let slug = '';\n  let isSearchURL = false;\n  \n  // Extract slug from URL\n  if (url.includes('?s=')) {\n    // Handle search URLs\n    isSearchURL = true;\n    const match = url.match(/[?&]s=([^&]+)/);\n    slug = match ? match[1] : '';\n  } else {\n    // Handle regular URLs - extract slug from path\n    const parts = url.split('/').filter(part => part.length > 0);\n    slug = parts[parts.length - 1];\n  }\n  \n  // Return transformed item\n  return {\n    json: {\n      url: url,\n      slug: slug,\n      metaTitle: (row['Meta Title'] || '').trim(),\n      metaDescription: (row['Meta Description'] || row['Meta Description '] || '').trim(),\n      isSearchURL: isSearchURL,\n      status: row.Status || ''\n    }\n  };\n});"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1728,
+        -160
+      ],
+      "id": "e39584b8-2328-4400-bf37-b5b8603ec96f",
+      "name": "Prepare Data"
+    },
+    {
+      "parameters": {
+        "url": "=https://homeopathicstore.uk/wp-json/wc/v3/products",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "wooCommerceApi",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "={{$json.isSearchURL ? 'search' : 'slug'}}",
+              "value": "={{$json.slug}}"
+            },
+            {
+              "name": "per_page",
+              "value": "10"
+            }
+          ]
+        },
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 5,
+              "batchInterval": 5000
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -1424,
+        -128
+      ],
+      "id": "323811a2-83a2-4cb8-bb3d-2466549c6845",
+      "name": "Find Product by Slug",
+      "credentials": {
+        "wooCommerceApi": {
+          "id": "7GtJp9sbNjbdzLv0",
+          "name": "WooCommerce account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Get all items from current node and the 'Prepare Data' node\nconst currentItems = $input.all();\nconst preparedDataItems = $('Prepare Data').all();\n\n// Process each item\nreturn currentItems.map((item, index) => {\n  const result = item.json;\n  const original = preparedDataItems[index]?.json || {};\n  \n  let productId = null;\n  let productName = null;\n  \n  // Handle different response structures\n  if (Array.isArray(result) && result.length > 0) {\n    // If result is an array, get first product\n    const product = result[0];\n    productId = product.id;\n    productName = product.name;\n  } else if (result && result.id) {\n    // If result is an object with id\n    productId = result.id;\n    productName = result.name;\n  } else if (result && result.data) {\n    // Handle nested data structure\n    if (Array.isArray(result.data) && result.data.length > 0) {\n      productId = result.data[0].id;\n      productName = result.data[0].name;\n    } else if (result.data.id) {\n      productId = result.data.id;\n      productName = result.data.name;\n    }\n  }\n  \n  // Return result based on whether product was found\n  if (!productId) {\n    return {\n      json: {\n        ...original,\n        status: 'Failed',\n        message: 'Product not found'\n      }\n    };\n  }\n  \n  return {\n    json: {\n      ...original,\n      productId: productId,\n      productName: productName,\n      status: 'Found'\n    }\n  };\n});"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1152,
+        -144
+      ],
+      "id": "922ff894-ba73-49a1-9be3-6579fa1f2e42",
+      "name": "Check Product"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{$json.status}}",
+              "value2": "Found"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -960,
+        -128
+      ],
+      "id": "a3561b45-0037-4346-8ece-5b78849534d5",
+      "name": "Product Found?"
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "=https://homeopathicstore.uk/wp-json/wc/v3/products/{{$json.productId}}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "wooCommerceApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"meta_data\": [\n    {\"key\": \"rank_math_title\", \"value\": \"{{$json.metaTitle}}\"},\n    {\"key\": \"rank_math_description\", \"value\": \"{{$json.metaDescription}}\"},\n    {\"key\": \"_yoast_wpseo_title\", \"value\": \"{{$json.metaTitle}}\"},\n    {\"key\": \"_yoast_wpseo_metadesc\", \"value\": \"{{$json.metaDescription}}\"}\n  ]\n}",
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 5,
+              "batchInterval": 5000
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -704,
+        -240
+      ],
+      "id": "4d5c2df9-09a0-4419-a277-3f96b271686c",
+      "name": "Update Meta"
+    },
+    {
+      "parameters": {
+        "jsCode": "return $input.all().map(item => ({\n  json: {\n    ...item.json,\n    status: 'Updated',\n    message: 'Meta updated successfully'\n  }\n}));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -496,
+        -240
+      ],
+      "id": "18fda1e2-65b9-408f-a9f7-994661ece0b5",
+      "name": "Success Message"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nreturn [{ json: { ...input, status: 'Failed', message: 'Product not found or update failed' } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -720,
+        -16
+      ],
+      "id": "1d841a86-8981-4d57-b825-50f5c2b04dd8",
+      "name": "Failed Message"
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "1Wc2nitLGCh_zHczEJi6fLJUlZOZbqp20keH7j0YdadU",
+          "mode": "list",
+          "cachedResultName": "HOMEOPATHIC STORE"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 698479895,
+          "mode": "list",
+          "cachedResultName": "Sheet4",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1Wc2nitLGCh_zHczEJi6fLJUlZOZbqp20keH7j0YdadU/edit#gid=698479895"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        -288,
+        -128
+      ],
+      "id": "54d77cd5-deee-484a-acd2-2cd976e98662",
+      "name": "Update Google Sheet",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "T7nTjrndF9zn5TZH",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyMinute"
+            }
+          ]
+        },
+        "documentId": {
+          "__rl": true,
+          "value": "1Wc2nitLGCh_zHczEJi6fLJUlZOZbqp20keH7j0YdadU",
+          "mode": "list",
+          "cachedResultName": "HOMEOPATHIC STORE",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1Wc2nitLGCh_zHczEJi6fLJUlZOZbqp20keH7j0YdadU/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 698479895,
+          "mode": "list",
+          "cachedResultName": "Sheet4",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1Wc2nitLGCh_zHczEJi6fLJUlZOZbqp20keH7j0YdadU/edit#gid=698479895"
+        },
+        "includeInOutput": "both",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheetsTrigger",
+      "typeVersion": 1,
+      "position": [
+        -2032,
+        -160
+      ],
+      "id": "84718adc-1a9b-47e8-a92d-1bedfe01126c",
+      "name": "Google Sheets Trigger",
+      "credentials": {
+        "googleSheetsTriggerOAuth2Api": {
+          "id": "ehBJ48t9AMpxIKht",
+          "name": "Google Sheets Trigger account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Prepare Data": {
+      "main": [
+        [
+          {
+            "node": "Find Product by Slug",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find Product by Slug": {
+      "main": [
+        [
+          {
+            "node": "Check Product",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Product": {
+      "main": [
+        [
+          {
+            "node": "Product Found?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Product Found?": {
+      "main": [
+        [
+          {
+            "node": "Update Meta",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Failed Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Meta": {
+      "main": [
+        [
+          {
+            "node": "Success Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Success Message": {
+      "main": [
+        [
+          {
+            "node": "Update Google Sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Failed Message": {
+      "main": [
+        [
+          {
+            "node": "Update Google Sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Sheets Trigger": {
+      "main": [
+        [
+          {
+            "node": "Prepare Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "6c521456-c820-4cd8-893e-8091be15bb88",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "d5c85d4e145e25a4ce6207091858937964ff12aee744f6a7a687604581b4b8a6"
+  },
+  "id": "4V4NypDXgU4inQiw",
+  "tags": []
+}
